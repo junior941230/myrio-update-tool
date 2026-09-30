@@ -1,6 +1,7 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$SourceRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'ChatGPT\myrio-codex'),
+    [string]$ReleaseNotes,
     [switch]$SkipBuild
 )
 
@@ -56,6 +57,11 @@ if ($old) {
     }
 }
 
+if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+    $ReleaseNotes = Read-Host 'Describe changes in this release'
+}
+if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) { throw 'Release notes are required for a new version.' }
+
 $version = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $target = Join-Path $releases $version
 if (Test-Path -LiteralPath $target) { throw "Version already exists: $version" }
@@ -63,6 +69,7 @@ New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
 foreach ($name in $files) {
     Copy-Item -LiteralPath (Join-Path $dist $name) -Destination (Join-Path $target $name) -ErrorAction Stop
 }
+Set-Content -LiteralPath (Join-Path $target 'RELEASE_NOTES.md') -Encoding UTF8 -Value $ReleaseNotes
 
 & git -C $repo add -- "fiimware/$version"
 if ($LASTEXITCODE -ne 0) { throw 'git add failed.' }

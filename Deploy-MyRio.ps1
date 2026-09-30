@@ -14,7 +14,7 @@ if (-not $Deploy) {
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
     $form.Text = 'myRIO 本地部署'
-    $form.Size = New-Object Drawing.Size(430, 205)
+    $form.ClientSize = New-Object Drawing.Size(600, 400)
     $form.StartPosition = 'CenterScreen'
 
     $ipLabel = New-Object Windows.Forms.Label
@@ -23,7 +23,7 @@ if (-not $Deploy) {
     $form.Controls.Add($ipLabel)
     $ipBox = New-Object Windows.Forms.TextBox
     $ipBox.Text = '172.22.11.2'
-    $ipBox.SetBounds(115, 20, 275, 25)
+    $ipBox.SetBounds(115, 20, 465, 25)
     $form.Controls.Add($ipBox)
 
     $versionLabel = New-Object Windows.Forms.Label
@@ -32,15 +32,77 @@ if (-not $Deploy) {
     $form.Controls.Add($versionLabel)
     $versionBox = New-Object Windows.Forms.ComboBox
     $versionBox.DropDownStyle = 'DropDownList'
-    $versionBox.SetBounds(115, 65, 275, 25)
-    Get-ChildItem -LiteralPath $releases -Directory | Sort-Object Name -Descending | ForEach-Object { [void]$versionBox.Items.Add($_.Name) }
-    if ($versionBox.Items.Count -gt 0) { $versionBox.SelectedIndex = 0 }
+    $versionBox.SetBounds(115, 65, 300, 25)
     $form.Controls.Add($versionBox)
+
+    $pullButton = New-Object Windows.Forms.Button
+    $pullButton.Text = 'Git pull／重新整理'
+    $pullButton.SetBounds(425, 64, 155, 27)
+    $form.Controls.Add($pullButton)
+
+    $notesLabel = New-Object Windows.Forms.Label
+    $notesLabel.Text = '版本更新內容'
+    $notesLabel.SetBounds(20, 108, 150, 25)
+    $form.Controls.Add($notesLabel)
+    $notesBox = New-Object Windows.Forms.TextBox
+    $notesBox.Multiline = $true
+    $notesBox.ReadOnly = $true
+    $notesBox.ScrollBars = 'Vertical'
+    $notesBox.SetBounds(20, 135, 560, 200)
+    $form.Controls.Add($notesBox)
+
+    $showNotes = {
+        if ($versionBox.SelectedItem) {
+            $path = Join-Path (Join-Path $releases ([string]$versionBox.SelectedItem)) 'RELEASE_NOTES.md'
+            $notesBox.Text = if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Get-Content -LiteralPath $path -Raw -Encoding UTF8
+            } else {
+                '此版本尚無更新說明。'
+            }
+        } else {
+            $notesBox.Clear()
+        }
+    }
+    $versionBox.Add_SelectedIndexChanged($showNotes)
+    $refreshVersions = {
+        $selected = [string]$versionBox.SelectedItem
+        $versionBox.Items.Clear()
+        Get-ChildItem -LiteralPath $releases -Directory | Sort-Object Name -Descending | ForEach-Object { [void]$versionBox.Items.Add($_.Name) }
+        if ($versionBox.Items.Contains($selected)) {
+            $versionBox.SelectedItem = $selected
+        } elseif ($versionBox.Items.Count -gt 0) {
+            $versionBox.SelectedIndex = 0
+        }
+        & $showNotes
+    }
+    & $refreshVersions
 
     $button = New-Object Windows.Forms.Button
     $button.Text = '部署（開啟終端機）'
-    $button.SetBounds(115, 112, 275, 32)
+    $button.SetBounds(20, 350, 560, 32)
     $form.Controls.Add($button)
+    $pullButton.Add_Click({
+        $pullButton.Enabled = $false
+        $form.UseWaitCursor = $true
+        try {
+            $savedPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $output = (& git -C $PSScriptRoot pull --ff-only 2>&1 | Out-String).Trim()
+                $exitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $savedPreference
+            }
+            if ($exitCode -ne 0) { throw "Git pull 失敗：`n$output" }
+            & $refreshVersions
+            [Windows.Forms.MessageBox]::Show($output, 'Git pull 完成') | Out-Null
+        } catch {
+            [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Git pull 失敗') | Out-Null
+        } finally {
+            $form.UseWaitCursor = $false
+            $pullButton.Enabled = $true
+        }
+    })
     $button.Add_Click({
         try {
             $address = [Net.IPAddress]::Parse($ipBox.Text.Trim())
