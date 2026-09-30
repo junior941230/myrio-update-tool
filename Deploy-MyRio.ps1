@@ -7,14 +7,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.Security
 $releases = Join-Path $PSScriptRoot 'fiimware'
+$local = Join-Path $PSScriptRoot '.local'
+$ipFile = Join-Path $local 'last-ip.txt'
+$passwordFile = Join-Path $local 'password.dpapi'
 
 if (-not $Deploy) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
     $form.Text = 'myRIO 本地部署'
-    $form.ClientSize = New-Object Drawing.Size(600, 400)
+    $form.ClientSize = New-Object Drawing.Size(600, 445)
     $form.StartPosition = 'CenterScreen'
 
     $ipLabel = New-Object Windows.Forms.Label
@@ -23,32 +27,73 @@ if (-not $Deploy) {
     $form.Controls.Add($ipLabel)
     $ipBox = New-Object Windows.Forms.TextBox
     $ipBox.Text = '172.22.11.2'
+    if (Test-Path -LiteralPath $ipFile) { $ipBox.Text = (Get-Content -LiteralPath $ipFile -Raw -Encoding UTF8).Trim() }
     $ipBox.SetBounds(115, 20, 465, 25)
     $form.Controls.Add($ipBox)
 
+    $passwordLabel = New-Object Windows.Forms.Label
+    $passwordLabel.Text = 'SSH 密碼'
+    $passwordLabel.SetBounds(20, 68, 90, 25)
+    $form.Controls.Add($passwordLabel)
+    $passwordBox = New-Object Windows.Forms.TextBox
+    $passwordBox.UseSystemPasswordChar = $true
+    $passwordBox.SetBounds(115, 65, 465, 25)
+    if (Test-Path -LiteralPath $passwordFile) {
+        try {
+            $encrypted = [Convert]::FromBase64String((Get-Content -LiteralPath $passwordFile -Raw).Trim())
+            $plain = [Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+            try { $passwordBox.Text = [Text.Encoding]::UTF8.GetString($plain) }
+            finally { [Array]::Clear($plain, 0, $plain.Length) }
+        } catch {
+            [Windows.Forms.MessageBox]::Show('已儲存的密碼無法解密，請重新輸入。', 'myRIO') | Out-Null
+        }
+    }
+    $form.Controls.Add($passwordBox)
+
+    $saveSettings = {
+        $address = $null
+        if (-not [Net.IPAddress]::TryParse($ipBox.Text.Trim(), [ref]$address) -or
+            $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw '請輸入有效的 IPv4 位址。' }
+        if (-not (Test-Path -LiteralPath $local)) { New-Item -ItemType Directory -Path $local | Out-Null }
+        if ($passwordBox.Text.Length -gt 0) {
+            $bytes = [Text.Encoding]::UTF8.GetBytes($passwordBox.Text)
+            try {
+                $encrypted = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+                [IO.File]::WriteAllText($passwordFile, [Convert]::ToBase64String($encrypted), [Text.Encoding]::ASCII)
+            } finally { [Array]::Clear($bytes, 0, $bytes.Length) }
+        } elseif (Test-Path -LiteralPath $passwordFile) {
+            Remove-Item -LiteralPath $passwordFile
+        }
+        [IO.File]::WriteAllText($ipFile, $address.ToString(), [Text.Encoding]::UTF8)
+    }
+    $form.Add_FormClosing({
+        try { & $saveSettings }
+        catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, '設定未儲存') | Out-Null }
+    })
+
     $versionLabel = New-Object Windows.Forms.Label
     $versionLabel.Text = '部署版本'
-    $versionLabel.SetBounds(20, 68, 90, 25)
+    $versionLabel.SetBounds(20, 108, 90, 25)
     $form.Controls.Add($versionLabel)
     $versionBox = New-Object Windows.Forms.ComboBox
     $versionBox.DropDownStyle = 'DropDownList'
-    $versionBox.SetBounds(115, 65, 300, 25)
+    $versionBox.SetBounds(115, 105, 300, 25)
     $form.Controls.Add($versionBox)
 
     $pullButton = New-Object Windows.Forms.Button
     $pullButton.Text = 'Git pull／重新整理'
-    $pullButton.SetBounds(425, 64, 155, 27)
+    $pullButton.SetBounds(425, 104, 155, 27)
     $form.Controls.Add($pullButton)
 
     $notesLabel = New-Object Windows.Forms.Label
     $notesLabel.Text = '版本更新內容'
-    $notesLabel.SetBounds(20, 108, 150, 25)
+    $notesLabel.SetBounds(20, 148, 150, 25)
     $form.Controls.Add($notesLabel)
     $notesBox = New-Object Windows.Forms.TextBox
     $notesBox.Multiline = $true
     $notesBox.ReadOnly = $true
     $notesBox.ScrollBars = 'Vertical'
-    $notesBox.SetBounds(20, 135, 560, 200)
+    $notesBox.SetBounds(20, 175, 560, 200)
     $form.Controls.Add($notesBox)
 
     $showNotes = {
@@ -79,7 +124,7 @@ if (-not $Deploy) {
 
     $button = New-Object Windows.Forms.Button
     $button.Text = '部署（開啟終端機）'
-    $button.SetBounds(20, 350, 560, 32)
+    $button.SetBounds(20, 395, 560, 32)
     $form.Controls.Add($button)
     $pullButton.Add_Click({
         $pullButton.Enabled = $false
@@ -107,7 +152,9 @@ if (-not $Deploy) {
         try {
             $address = [Net.IPAddress]::Parse($ipBox.Text.Trim())
             if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw '請輸入 IPv4 位址。' }
+            if ([string]::IsNullOrEmpty($passwordBox.Text)) { throw '請輸入 SSH 密碼。' }
             if (-not $versionBox.SelectedItem) { throw '請選擇版本。' }
+            & $saveSettings
             $selected = [string]$versionBox.SelectedItem
             $arguments = '-NoExit -ExecutionPolicy Bypass -File "{0}" -Deploy -IPAddress {1} -Version {2}' -f $PSCommandPath, $address, $selected
             Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments
@@ -125,6 +172,23 @@ if (-not [Net.IPAddress]::TryParse($IPAddress, [ref]$address) -or
 if ($Version -notmatch '^\d{8}T\d{6}Z$') { throw 'Invalid version.' }
 $release = Join-Path $releases $Version
 if (-not (Test-Path -LiteralPath $release -PathType Container)) { throw "Version not found: $Version" }
+if (-not (Test-Path -LiteralPath $passwordFile -PathType Leaf)) { throw 'Save the SSH password in the UI first.' }
+if (-not (Test-Path -LiteralPath $ipFile -PathType Leaf) -or
+    (Get-Content -LiteralPath $ipFile -Raw -Encoding UTF8).Trim() -ne $address.ToString()) {
+    throw 'The selected IP differs from the saved credential. Save it in the UI first.'
+}
+
+$askpass = Join-Path $local 'AskPass.exe'
+$askpassSource = Join-Path $PSScriptRoot 'AskPass.cs'
+if (-not (Test-Path -LiteralPath $askpass) -or
+    (Get-Item -LiteralPath $askpassSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $askpass).LastWriteTimeUtc) {
+    if (Test-Path -LiteralPath $askpass) { Remove-Item -LiteralPath $askpass }
+    Add-Type -Path $askpassSource -OutputAssembly $askpass -OutputType ConsoleApplication -ReferencedAssemblies 'System.Security.dll'
+}
+$env:SSH_ASKPASS = $askpass
+$env:SSH_ASKPASS_REQUIRE = 'force'
+$env:DISPLAY = 'myrio'
+$env:MYRIO_PASSWORD_FILE = $passwordFile
 
 $expected = @('libydlidar_lv.so', 'libydlidar_lv.so.1.2.0', 'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0', 'myrio-runtime.tar.gz')
 $seen = @{}
@@ -144,7 +208,7 @@ $remote = "admin@$address"
 $archive = Join-Path $release 'myrio-runtime.tar.gz'
 $remoteArchive = '/tmp/myrio-runtime-{0}.tar.gz' -f [guid]::NewGuid().ToString('N')
 Write-Host "Uploading $Version to $remote ..."
-& scp.exe -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new $archive "${remote}:$remoteArchive"
+& scp.exe -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 $archive "${remote}:$remoteArchive"
 if ($LASTEXITCODE -ne 0) { throw 'Upload failed.' }
 
 $remoteScript = @'
@@ -174,5 +238,5 @@ echo "Deployment complete. Test artifacts retained at $runtime"
 '@
 $remoteScript = $remoteScript.Replace('__ARCHIVE__', $remoteArchive)
 $remoteScript = $remoteScript -replace "`r`n", "`n"
-& ssh.exe -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new $remote $remoteScript
+& ssh.exe -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 $remote $remoteScript
 if ($LASTEXITCODE -ne 0) { throw 'Target test or installation failed.' }

@@ -20,4 +20,4 @@ powershell.exe -ExecutionPolicy Bypass -File .\Publish-MyRio.ps1 -ReleaseNotes "
 powershell.exe -ExecutionPolicy Bypass -File .\Deploy-MyRio.ps1
 ```
 
-輸入 myRIO IPv4 並選版本，介面會顯示該版本更新說明。按「Git pull／重新整理」會以 fast-forward 方式從 GitHub 更新本機版本清單。按部署後終端機會開啟，供 SSH 首次確認 host key 或輸入密碼。腳本上傳選定封包，在 myRIO 跑六項 ARM 測試；全部通過才安裝到 `/usr/local` 並做安裝後 smoke test。裝置需能以 `admin` SSH 連線。
+輸入 myRIO IPv4、SSH 密碼並選版本，介面會顯示該版本更新說明。上次的 IP 和密碼會保存在本機 `.local/`；密碼使用 Windows DPAPI 加密，只有同一台電腦的同一個 Windows 使用者可解密，且 `.local/` 不會加入 Git。按「Git pull／重新整理」會以 fast-forward 方式從 GitHub 更新本機版本清單。按部署後，內建 OpenSSH 會透過本機 askpass 程式讀取加密密碼，不需在終端機再次輸入。腳本上傳選定封包，在 myRIO 跑六項 ARM 測試；全部通過才安裝到 `/usr/local` 並做安裝後 smoke test。裝置需能以 `admin` SSH 連線。
