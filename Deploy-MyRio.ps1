@@ -64,12 +64,18 @@ if ($Version -notmatch '^\d{8}T\d{6}Z$') { throw 'Invalid version.' }
 $release = Join-Path $releases $Version
 if (-not (Test-Path -LiteralPath $release -PathType Container)) { throw "Version not found: $Version" }
 
+$expected = @('libydlidar_lv.so', 'libydlidar_lv.so.1.2.0', 'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0', 'myrio-runtime.tar.gz')
+$seen = @{}
 foreach ($line in Get-Content -LiteralPath (Join-Path $release 'SHA256SUMS')) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
     $name = $Matches[2]
-    if ($name -notin @('libydlidar_lv.so', 'libydlidar_lv.so.1.2.0', 'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0', 'myrio-runtime.tar.gz')) { throw "Unexpected checksum entry: $name" }
+    if ($name -notin $expected -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
+    $seen[$name] = $true
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $release $name)).Hash
     if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
+}
+foreach ($name in $expected) {
+    if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
 }
 
 $remote = "admin@$address"

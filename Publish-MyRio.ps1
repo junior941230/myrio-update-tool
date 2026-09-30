@@ -25,12 +25,17 @@ foreach ($name in $files) {
         throw "Missing build output: $name"
     }
 }
+$seen = @{}
 foreach ($line in Get-Content -LiteralPath (Join-Path $dist 'SHA256SUMS')) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
     $name = $Matches[2]
-    if ($name -notin $files) { throw "Unexpected checksum entry: $name" }
+    if ($name -notin $files -or $name -eq 'SHA256SUMS' -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
+    $seen[$name] = $true
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dist $name)).Hash
     if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
+}
+foreach ($name in $files | Where-Object { $_ -ne 'SHA256SUMS' }) {
+    if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
 }
 
 $old = Get-ChildItem -LiteralPath $releases -Directory | Sort-Object Name -Descending | Select-Object -First 1
@@ -45,6 +50,8 @@ if ($old) {
     }
     if ($unchanged) {
         Write-Host "Libraries unchanged; current version is $($old.Name)."
+        & git -C $repo push -u origin main
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub push failed; retry when the network is available.' }
         return
     }
 }
