@@ -10,7 +10,7 @@
 powershell.exe -ExecutionPolicy Bypass -File .\Publish-MyRio.ps1 -ReleaseNotes "本版修正了..."
 ```
 
-預設從 `Documents\ChatGPT\myrio-codex` 呼叫 WSL／NI SDK 交叉編譯，成功後驗證 SHA-256、建立新版本、Git commit 並 push 到 `origin/main`。每個新版本須提供 `-ReleaseNotes`；未提供時會提示輸入。可用 `-SourceRoot` 指定其他原始碼位置。若已單獨完成編譯，可加 `-SkipBuild`。push 失敗時版本和 commit 會保留在本機，網路恢復後重新執行發布腳本即可重試推送。
+主專案的 `scripts/Build-MyRio.ps1` 現在會在交叉編譯成功後自動呼叫此發布腳本。也可從這裡主動發起編譯；成功後會驗證 SHA-256、建立新版本、Git commit 並 push 到 `origin/main`。`-ReleaseNotes` 可寫版本說明；未提供時自動記錄來源 commit 和未提交的原始碼檔案。可用 `-SourceRoot` 指定其他原始碼位置。若已單獨完成編譯，可加 `-SkipBuild`。push 失敗時版本和 commit 會保留在本機，網路恢復後重新執行發布腳本即可重試推送。
 
 ## 本地部署
 

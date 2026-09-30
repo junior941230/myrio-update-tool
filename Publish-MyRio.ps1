@@ -17,7 +17,7 @@ $files = @(
 )
 
 if (-not $SkipBuild) {
-    & (Join-Path $SourceRoot 'scripts\Build-MyRio.ps1')
+    & (Join-Path $SourceRoot 'scripts\Build-MyRio.ps1') -SkipPublish
     if (-not $?) { throw 'Cross compilation failed.' }
 }
 
@@ -58,9 +58,17 @@ if ($old) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
-    $ReleaseNotes = Read-Host 'Describe changes in this release'
+    $commit = (& git -C $SourceRoot rev-parse --short HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source commit for release notes.' }
+    $subject = (& git -C $SourceRoot log -1 --format=%s).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot read source commit subject.' }
+    $changes = @(& git -C $SourceRoot status --short --untracked-files=normal -- src include CMakeLists.txt)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source changes for release notes.' }
+    $ReleaseNotes = "Automatic cross build from myrio-codex commit $commit`n$subject"
+    if ($changes.Count -gt 0) {
+        $ReleaseNotes += "`nUncommitted source changes at build time:`n" + ($changes -join "`n")
+    }
 }
-if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) { throw 'Release notes are required for a new version.' }
 
 $version = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $target = Join-Path $releases $version
