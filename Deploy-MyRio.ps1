@@ -2,7 +2,8 @@
 param(
     [string]$IPAddress,
     [string]$Version,
-    [switch]$Deploy
+    [switch]$Deploy,
+    [switch]$Trace
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +14,9 @@ $local = Join-Path $PSScriptRoot '.local'
 $ipFile = Join-Path $local 'last-ip.txt'
 $passwordFile = Join-Path $local 'password.dpapi'
 
-if (-not $Deploy) {
+if ($Deploy -and $Trace) { throw 'Choose either deployment or trace.' }
+
+if (-not $Deploy -and -not $Trace) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
@@ -122,9 +125,14 @@ if (-not $Deploy) {
     }
     & $refreshVersions
 
+    $traceButton = New-Object Windows.Forms.Button
+    $traceButton.Text = '查看裝置 Trace'
+    $traceButton.SetBounds(20, 395, 270, 32)
+    $form.Controls.Add($traceButton)
+
     $button = New-Object Windows.Forms.Button
     $button.Text = '部署（開啟終端機）'
-    $button.SetBounds(20, 395, 560, 32)
+    $button.SetBounds(310, 395, 270, 32)
     $form.Controls.Add($button)
     $pullButton.Add_Click({
         $pullButton.Enabled = $false
@@ -162,6 +170,18 @@ if (-not $Deploy) {
             [Windows.Forms.MessageBox]::Show($_.Exception.Message, '無法部署') | Out-Null
         }
     })
+    $traceButton.Add_Click({
+        try {
+            $address = [Net.IPAddress]::Parse($ipBox.Text.Trim())
+            if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw '請輸入 IPv4 位址。' }
+            if ([string]::IsNullOrEmpty($passwordBox.Text)) { throw '請輸入 SSH 密碼。' }
+            & $saveSettings
+            $arguments = '-NoExit -ExecutionPolicy Bypass -File "{0}" -Trace -IPAddress {1}' -f $PSCommandPath, $address
+            Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments
+        } catch {
+            [Windows.Forms.MessageBox]::Show($_.Exception.Message, '無法查看 Trace') | Out-Null
+        }
+    })
     [void]$form.ShowDialog()
     return
 }
@@ -169,9 +189,11 @@ if (-not $Deploy) {
 $address = $null
 if (-not [Net.IPAddress]::TryParse($IPAddress, [ref]$address) -or
     $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw 'Invalid IPv4 address.' }
-if ($Version -notmatch '^\d{8}T\d{6}Z$') { throw 'Invalid version.' }
-$release = Join-Path $releases $Version
-if (-not (Test-Path -LiteralPath $release -PathType Container)) { throw "Version not found: $Version" }
+if ($Deploy) {
+    if ($Version -notmatch '^\d{8}T\d{6}Z$') { throw 'Invalid version.' }
+    $release = Join-Path $releases $Version
+    if (-not (Test-Path -LiteralPath $release -PathType Container)) { throw "Version not found: $Version" }
+}
 if (-not (Test-Path -LiteralPath $passwordFile -PathType Leaf)) { throw 'Save the SSH password in the UI first.' }
 if (-not (Test-Path -LiteralPath $ipFile -PathType Leaf) -or
     (Get-Content -LiteralPath $ipFile -Raw -Encoding UTF8).Trim() -ne $address.ToString()) {
@@ -190,6 +212,24 @@ $env:SSH_ASKPASS_REQUIRE = 'force'
 $env:DISPLAY = 'myrio'
 $env:MYRIO_PASSWORD_FILE = $passwordFile
 
+$remote = "admin@$address"
+if ($Trace) {
+    $traceDir = Join-Path $local 'traces'
+    if (-not (Test-Path -LiteralPath $traceDir)) { New-Item -ItemType Directory -Path $traceDir | Out-Null }
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+    $traceFile = Join-Path $traceDir ('myrio_nav_trace_{0}_{1}_{2}.csv' -f $address, $stamp, [guid]::NewGuid().ToString('N').Substring(0, 6))
+    & scp.exe -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 "${remote}:/tmp/myrio_nav_trace.csv" $traceFile
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path -LiteralPath $traceFile) { Remove-Item -LiteralPath $traceFile }
+        throw 'Trace download failed. The trace is written after navigation ends or is cancelled.'
+    }
+    $rows = @(Get-Content -LiteralPath $traceFile -Encoding UTF8 | Where-Object { $_ -and -not $_.StartsWith('#') } | ConvertFrom-Csv)
+    if ($rows.Count -eq 0) { throw "Trace has no samples: $traceFile" }
+    Write-Host "Saved $($rows.Count) trace samples to $traceFile"
+    $rows | Out-GridView -Wait -Title "myRIO Trace $address ($stamp)"
+    return
+}
+
 $expected = @('libydlidar_lv.so', 'libydlidar_lv.so.1.2.0', 'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0', 'myrio-runtime.tar.gz')
 $seen = @{}
 foreach ($line in Get-Content -LiteralPath (Join-Path $release 'SHA256SUMS')) {
@@ -204,7 +244,6 @@ foreach ($name in $expected) {
     if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
 }
 
-$remote = "admin@$address"
 $archive = Join-Path $release 'myrio-runtime.tar.gz'
 $remoteArchive = '/tmp/myrio-runtime-{0}.tar.gz' -f [guid]::NewGuid().ToString('N')
 Write-Host "Uploading $Version to $remote ..."
