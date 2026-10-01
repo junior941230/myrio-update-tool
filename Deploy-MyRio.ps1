@@ -235,11 +235,13 @@ $required = @('libydlidar_lv.so', 'libmyrio_nav.so', 'myrio-runtime.tar.gz')
 $seen = @{}
 foreach ($line in Get-Content -LiteralPath (Join-Path $release 'SHA256SUMS')) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
+    $expectedHash = $Matches[1]
     $name = $Matches[2]
+    # -notmatch overwrites $Matches, so the hash is captured above.
     if ($name -notmatch $allowedName -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
     $seen[$name] = $true
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $release $name)).Hash
-    if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
+    if ($actual -ne $expectedHash) { throw "Checksum mismatch: $name" }
 }
 foreach ($name in $required) {
     if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }

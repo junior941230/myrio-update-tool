@@ -25,13 +25,15 @@ if (-not (Test-Path -LiteralPath $sums -PathType Leaf)) { throw 'Missing build o
 $seen = @{}
 foreach ($line in Get-Content -LiteralPath $sums) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
+    $expectedHash = $Matches[1]
     $name = $Matches[2]
+    # -notmatch overwrites $Matches, so the hash is captured above.
     if ($name -notmatch $allowedName -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
     $path = Join-Path $dist $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing build output: $name" }
     $seen[$name] = $true
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash
-    if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
+    if ($actual -ne $expectedHash) { throw "Checksum mismatch: $name" }
 }
 foreach ($name in $required) {
     if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
