@@ -1,0 +1,1 @@
+﻿myrio-claude 重構版 (nav 2.0.0 / lidar 1.3.0)。LabVIEW C ABI 不變。修正：RT 與 start/cancel 的 data race、FAULT 被覆蓋、超大 yaw 卡死、deskew 時間錯誤、場外單次命中污染定位、destroy LiDAR 時 use-after-free、STARTING 無逾時、部署覆寫使用中的 .so。定位加入 odom prior 與 sub-cell refine（模擬中漂移約 6 cm 降到約 2 cm）。尚未經實機驗證。
