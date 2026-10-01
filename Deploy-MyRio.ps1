@@ -230,17 +230,18 @@ if ($Trace) {
     return
 }
 
-$expected = @('libydlidar_lv.so', 'libydlidar_lv.so.1.2.0', 'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0', 'myrio-runtime.tar.gz')
+$allowedName = '^(lib(ydlidar_lv|myrio_nav)\.so(\.\d+)*|myrio-runtime\.tar\.gz)$'
+$required = @('libydlidar_lv.so', 'libmyrio_nav.so', 'myrio-runtime.tar.gz')
 $seen = @{}
 foreach ($line in Get-Content -LiteralPath (Join-Path $release 'SHA256SUMS')) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
     $name = $Matches[2]
-    if ($name -notin $expected -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
+    if ($name -notmatch $allowedName -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
     $seen[$name] = $true
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $release $name)).Hash
     if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
 }
-foreach ($name in $expected) {
+foreach ($name in $required) {
     if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
 }
 
@@ -256,6 +257,11 @@ runtime=$(mktemp -d /tmp/myrio-runtime.XXXXXX)
 tar -xzf __ARCHIVE__ -C "$runtime"
 rm -f __ARCHIVE__
 cd "$runtime"
+# Newer releases ship their own installer (tests first, install only on success).
+if [ -f myrio-install.sh ]; then
+    sh ./myrio-install.sh
+    exit 0
+fi
 ln -s libydlidar_lv.so.1.2.0 libydlidar_lv.so.1
 ln -s libmyrio_nav.so.1.0.0 libmyrio_nav.so.1
 export LD_LIBRARY_PATH="$runtime"

@@ -10,39 +10,39 @@ Set-StrictMode -Version Latest
 $repo = $PSScriptRoot
 $releases = Join-Path $repo 'fiimware'
 $dist = Join-Path $SourceRoot 'dist\myrio-armv7'
-$files = @(
-    'libydlidar_lv.so', 'libydlidar_lv.so.1.2.0',
-    'libmyrio_nav.so', 'libmyrio_nav.so.1.0.0',
-    'myrio-runtime.tar.gz', 'SHA256SUMS'
-)
+# Versioned library names change between source versions, so the release is
+# whatever SHA256SUMS lists, limited to these name patterns.
+$allowedName = '^(lib(ydlidar_lv|myrio_nav)\.so(\.\d+)*|myrio-runtime\.tar\.gz)$'
+$required = @('libydlidar_lv.so', 'libmyrio_nav.so', 'myrio-runtime.tar.gz')
 
 if (-not $SkipBuild) {
     & (Join-Path $SourceRoot 'scripts\Build-MyRio.ps1') -SkipPublish
     if (-not $?) { throw 'Cross compilation failed.' }
 }
 
-foreach ($name in $files) {
-    if (-not (Test-Path -LiteralPath (Join-Path $dist $name) -PathType Leaf)) {
-        throw "Missing build output: $name"
-    }
-}
+$sums = Join-Path $dist 'SHA256SUMS'
+if (-not (Test-Path -LiteralPath $sums -PathType Leaf)) { throw 'Missing build output: SHA256SUMS' }
 $seen = @{}
-foreach ($line in Get-Content -LiteralPath (Join-Path $dist 'SHA256SUMS')) {
+foreach ($line in Get-Content -LiteralPath $sums) {
     if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid SHA256SUMS line: $line" }
     $name = $Matches[2]
-    if ($name -notin $files -or $name -eq 'SHA256SUMS' -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
+    if ($name -notmatch $allowedName -or $seen.ContainsKey($name)) { throw "Unexpected checksum entry: $name" }
+    $path = Join-Path $dist $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing build output: $name" }
     $seen[$name] = $true
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dist $name)).Hash
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash
     if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $name" }
 }
-foreach ($name in $files | Where-Object { $_ -ne 'SHA256SUMS' }) {
+foreach ($name in $required) {
     if (-not $seen.ContainsKey($name)) { throw "Missing checksum entry: $name" }
 }
+$files = @($seen.Keys | Sort-Object) + 'SHA256SUMS'
 
 $old = Get-ChildItem -LiteralPath $releases -Directory | Sort-Object Name -Descending | Select-Object -First 1
 if ($old) {
     $unchanged = $true
-    foreach ($name in @('libydlidar_lv.so.1.2.0', 'libmyrio_nav.so.1.0.0')) {
+    # Unversioned copies exist in every release layout.
+    foreach ($name in @('libydlidar_lv.so', 'libmyrio_nav.so')) {
         $previous = Join-Path $old.FullName $name
         if (-not (Test-Path -LiteralPath $previous) -or
             (Get-FileHash -Algorithm SHA256 -LiteralPath $previous).Hash -ne (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dist $name)).Hash) {
@@ -58,15 +58,20 @@ if ($old) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
-    $commit = (& git -C $SourceRoot rev-parse --short HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source commit for release notes.' }
-    $subject = (& git -C $SourceRoot log -1 --format=%s).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot read source commit subject.' }
-    $changes = @(& git -C $SourceRoot status --short --untracked-files=normal -- src include CMakeLists.txt)
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source changes for release notes.' }
-    $ReleaseNotes = "Automatic cross build from myrio-codex commit $commit`n$subject"
-    if ($changes.Count -gt 0) {
-        $ReleaseNotes += "`nUncommitted source changes at build time:`n" + ($changes -join "`n")
+    $sourceName = Split-Path -Leaf $SourceRoot
+    if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot '.git'))) {
+        $ReleaseNotes = "Automatic cross build from $sourceName (not a git repository)"
+    } else {
+        $commit = (& git -C $SourceRoot rev-parse --short HEAD).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source commit for release notes.' }
+        $subject = (& git -C $SourceRoot log -1 --format=%s).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot read source commit subject.' }
+        $changes = @(& git -C $SourceRoot status --short --untracked-files=normal -- src include CMakeLists.txt)
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source changes for release notes.' }
+        $ReleaseNotes = "Automatic cross build from $sourceName commit $commit`n$subject"
+        if ($changes.Count -gt 0) {
+            $ReleaseNotes += "`nUncommitted source changes at build time:`n" + ($changes -join "`n")
+        }
     }
 }
 
